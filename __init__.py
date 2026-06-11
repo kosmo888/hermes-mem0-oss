@@ -5,12 +5,15 @@ Shared memory backend for multiple Hermes instances. Each instance uses
 a distinct user_id for attribution; all memories live in the same pgvector
 database and are cross-searchable.
 
-Config via environment variables:
-  MEM0_OSS_URL        — mem0-official server URL (default: http://localhost:8888)
-  MEM0_OSS_EMAIL      — Login email (default: admin@mem0.local)
-  MEM0_OSS_PASSWORD   — Login password
-  MEM0_OSS_USER_ID    — User identifier for this instance (default: hermes-native)
-  MEM0_OSS_AGENT_ID   — Agent identifier (default: hermes)
+Config via environment variables (API Key recommended):
+  MEM0_OSS_API_KEY     — Admin API key (preferred auth method)
+  MEM0_OSS_URL         — mem0-official server URL (default: http://localhost:8888)
+  MEM0_OSS_USER_ID     — User identifier for this instance (default: hermes-native)
+  MEM0_OSS_AGENT_ID    — Agent identifier (default: hermes)
+
+Fallback auth (if API key not set):
+  MEM0_OSS_EMAIL       — Login email (default: admin@mem0.local)
+  MEM0_OSS_PASSWORD    — Login password
 
 Deployment:
   1. Copy this file to ~/.hermes/plugins/memory/mem0_oss/__init__.py
@@ -54,6 +57,7 @@ GITHUB_RAW = (
 def _load_config() -> dict:
     return {
         "url": os.environ.get("MEM0_OSS_URL", "http://localhost:8888"),
+        "api_key": os.environ.get("MEM0_OSS_API_KEY", ""),
         "email": os.environ.get("MEM0_OSS_EMAIL", "admin@mem0.local"),
         "password": os.environ.get("MEM0_OSS_PASSWORD", ""),
         "user_id": os.environ.get("MEM0_OSS_USER_ID", "hermes-native"),
@@ -133,16 +137,8 @@ class Mem0OssMemoryProvider(MemoryProvider):
                 "default": "http://localhost:8888", "env_var": "MEM0_OSS_URL",
             },
             {
-                "key": "api_key", "description": "Admin API key (alternative to email+password login)",
+                "key": "api_key", "description": "Admin API key (recommended — preferred over email+password)",
                 "secret": True, "required": False, "env_var": "MEM0_OSS_API_KEY",
-            },
-            {
-                "key": "email", "description": "Login email",
-                "default": "admin@mem0.local", "env_var": "MEM0_OSS_EMAIL",
-            },
-            {
-                "key": "password", "description": "Login password (not needed if auth is disabled on mem0 server, or if using api_key)",
-                "secret": True, "required": False, "env_var": "MEM0_OSS_PASSWORD",
             },
             {
                 "key": "user_id", "description": "User identifier for this instance",
@@ -152,6 +148,14 @@ class Mem0OssMemoryProvider(MemoryProvider):
                 "key": "agent_id", "description": "Agent identifier",
                 "default": "hermes", "env_var": "MEM0_OSS_AGENT_ID",
             },
+            {
+                "key": "email", "description": "Login email (fallback — only needed without API key)",
+                "default": "admin@mem0.local", "env_var": "MEM0_OSS_EMAIL",
+            },
+            {
+                "key": "password", "description": "Login password (fallback — only needed without API key, not needed if mem0 auth is disabled)",
+                "secret": True, "required": False, "env_var": "MEM0_OSS_PASSWORD",
+            },
         ]
 
     def initialize(self, session_id: str, **kwargs) -> None:
@@ -159,11 +163,11 @@ class Mem0OssMemoryProvider(MemoryProvider):
         self._url = cfg["url"].rstrip("/")
         self._user_id = kwargs.get("user_id") or cfg["user_id"]
         self._agent_id = cfg["agent_id"]
-        # Pre-load token if using password auth
-        if cfg.get("password"):
-            self._login()
-        elif cfg.get("api_key"):
+        # Prefer API Key auth over password
+        if cfg.get("api_key"):
             self._token = cfg["api_key"]
+        elif cfg.get("password"):
+            self._login()
 
     # ------------------------------------------------------------------
     # Auth
@@ -172,9 +176,10 @@ class Mem0OssMemoryProvider(MemoryProvider):
     def _login(self) -> bool:
         """Log into mem0-official, store JWT token. Thread-safe."""
         with self._token_lock:
-            # If using API key directly, no login needed
             cfg = _load_config()
-            if cfg.get("api_key") and not cfg.get("password"):
+
+            # API Key preferred — use directly, no login needed
+            if cfg.get("api_key"):
                 self._token = cfg["api_key"]
                 return True
 

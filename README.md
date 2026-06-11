@@ -54,11 +54,16 @@ Add to `~/.hermes/.env`:
 
 ```bash
 MEM0_OSS_URL=http://localhost:8888          # mem0 server URL
-MEM0_OSS_EMAIL=admin@mem0.local             # mem0 login email
-MEM0_OSS_PASSWORD=your-password             # mem0 login password
+MEM0_OSS_API_KEY=m0sk_xxxxxxxxxxxx          # admin API key (recommended)
 MEM0_OSS_USER_ID=hermes                     # user identifier (unique per instance)
 MEM0_OSS_AGENT_ID=hermes                    # agent identifier
 ```
+
+> **Alternative**: If you don't have an API key, use email+password instead:
+> ```bash
+> MEM0_OSS_EMAIL=admin@mem0.local
+> MEM0_OSS_PASSWORD=your-password
+> ```
 
 ### 3. Enable the plugin
 
@@ -98,13 +103,22 @@ for attribution.
 | Variable | Default | Description |
 |---|---|---|
 | `MEM0_OSS_URL` | `http://localhost:8888` | mem0-official server URL |
-| `MEM0_OSS_EMAIL` | `admin@mem0.local` | Login email |
-| `MEM0_OSS_PASSWORD` | *(required)* | Login password |
+| `MEM0_OSS_API_KEY` | *(recommended)* | Admin API key |
 | `MEM0_OSS_USER_ID` | `hermes` | User identifier for this instance |
 | `MEM0_OSS_AGENT_ID` | `hermes` | Agent identifier |
+| `MEM0_OSS_EMAIL` | `admin@mem0.local` | Login email (fallback) |
+| `MEM0_OSS_PASSWORD` | — | Login password (fallback) |
 | `MEM0_OSS_READ_ALL` | `false` | If `true`, search returns all users' memories |
 
 ## Tools Provided
+
+### `mem0_update`
+
+Update the plugin from GitHub to the latest version.
+
+```
+mem0_update()
+```
 
 ### `mem0_search`
 
