@@ -1,48 +1,23 @@
 """
 Mem0 OSS MemoryProvider — connects to self-hosted mem0-official server.
 
-A Hermes Agent memory provider plugin that syncs built-in memory writes
-to a self-hosted mem0-official server (REST API), enabling shared,
-cross-instance semantic memory backed by pgvector.
-
 Shared memory backend for multiple Hermes instances. Each instance uses
 a distinct user_id for attribution; all memories live in the same pgvector
 database and are cross-searchable.
 
-Features:
-  - Auto-mirrors built-in memory writes to mem0 server
-  - Semantic search across all instances (mem0_search)
-  - Full profile retrieval (mem0_profile)
-  - Circuit breaker for API resilience
-  - Optional cross-user read mode (MEM0_OSS_READ_ALL=true)
-
 Config via environment variables:
-  MEM0_OSS_URL          — mem0-official server URL (default: http://localhost:8888)
-  MEM0_OSS_EMAIL        — Login email (default: admin@mem0.local)
-  MEM0_OSS_PASSWORD     — Login password (required)
-  MEM0_OSS_USER_ID      — User identifier for this instance (default: hermes)
-  MEM0_OSS_AGENT_ID     — Agent identifier (default: hermes)
-  MEM0_OSS_READ_ALL     — If "true", search returns memories from ALL users,
-                           not just the current user_id. Useful when multiple
-                           Hermes instances share the same mem0 server but use
-                           different user_ids.
+  MEM0_OSS_URL        — mem0-official server URL (default: http://localhost:8888)
+  MEM0_OSS_EMAIL      — Login email (default: admin@hermesagent.com)
+  MEM0_OSS_PASSWORD   — Login password
+  MEM0_OSS_USER_ID    — User identifier for this instance (default: hermes-native)
+  MEM0_OSS_AGENT_ID   — Agent identifier (default: hermes)
 
 Deployment:
-  1. Copy __init__.py to ~/.hermes/plugins/memory/mem0_oss/__init__.py
-     (for Docker Hermes: ~/.hermes/plugins/mem0_oss/__init__.py)
+  1. Copy this file to ~/.hermes/plugins/memory/mem0_oss/__init__.py
   2. Set env vars in ~/.hermes/.env
   3. hermes config set memory.provider mem0-oss
   4. hermes config set plugins.enabled '["memory/mem0_oss"]'
-     (Docker: hermes config set plugins.enabled '["mem0_oss"]')
   5. Restart Hermes gateway
-
-Prerequisites:
-  - A running mem0-official server (https://github.com/mem0ai/mem0)
-  - Network access from Hermes to the mem0 server
-
-Dependencies:
-  - Python stdlib only (urllib, threading, json, os, logging)
-  - No pip packages required
 """
 
 from __future__ import annotations
@@ -73,7 +48,7 @@ def _load_config() -> dict:
         "url": os.environ.get("MEM0_OSS_URL", "http://localhost:8888"),
         "email": os.environ.get("MEM0_OSS_EMAIL", "admin@mem0.local"),
         "password": os.environ.get("MEM0_OSS_PASSWORD", ""),
-        "user_id": os.environ.get("MEM0_OSS_USER_ID", "hermes"),
+        "user_id": os.environ.get("MEM0_OSS_USER_ID", "hermes-native"),
         "agent_id": os.environ.get("MEM0_OSS_AGENT_ID", "hermes"),
     }
 
@@ -111,7 +86,7 @@ class Mem0OssMemoryProvider(MemoryProvider):
 
     def __init__(self):
         self._url = "http://localhost:8888"
-        self._user_id = "hermes"
+        self._user_id = "hermes-native"
         self._agent_id = "hermes"
         self._token: Optional[str] = None
         self._token_lock = threading.Lock()
@@ -129,8 +104,7 @@ class Mem0OssMemoryProvider(MemoryProvider):
         return "mem0-oss"
 
     def is_available(self) -> bool:
-        cfg = _load_config()
-        return bool(cfg.get("password"))
+        return True  # works with or without auth (password / API key / no-auth)
 
     def get_config_schema(self):
         return [
@@ -139,12 +113,16 @@ class Mem0OssMemoryProvider(MemoryProvider):
                 "default": "http://localhost:8888", "env_var": "MEM0_OSS_URL",
             },
             {
+                "key": "api_key", "description": "Admin API key (alternative to email+password login)",
+                "secret": True, "required": False, "env_var": "MEM0_OSS_API_KEY",
+            },
+            {
                 "key": "email", "description": "Login email",
                 "default": "admin@mem0.local", "env_var": "MEM0_OSS_EMAIL",
             },
             {
-                "key": "password", "description": "Login password",
-                "secret": True, "required": True, "env_var": "MEM0_OSS_PASSWORD",
+                "key": "password", "description": "Login password (not needed if auth is disabled on mem0 server, or if using api_key)",
+                "secret": True, "required": False, "env_var": "MEM0_OSS_PASSWORD",
             },
             {
                 "key": "user_id", "description": "User identifier for this instance",
@@ -161,8 +139,11 @@ class Mem0OssMemoryProvider(MemoryProvider):
         self._url = cfg["url"].rstrip("/")
         self._user_id = kwargs.get("user_id") or cfg["user_id"]
         self._agent_id = cfg["agent_id"]
-        # Pre-load token
-        self._login()
+        # Pre-load token if using password auth
+        if cfg.get("password"):
+            self._login()
+        elif cfg.get("api_key"):
+            self._token = cfg["api_key"]
 
     # ------------------------------------------------------------------
     # Auth
@@ -171,16 +152,22 @@ class Mem0OssMemoryProvider(MemoryProvider):
     def _login(self) -> bool:
         """Log into mem0-official, store JWT token. Thread-safe."""
         with self._token_lock:
+            # If using API key directly, no login needed
+            cfg = _load_config()
+            if cfg.get("api_key") and not cfg.get("password"):
+                self._token = cfg["api_key"]
+                return True
+
+            # No credentials at all — auth is disabled on server
+            if not cfg.get("password"):
+                return True  # no-auth mode
+
             # Check if existing token is still fresh (tokens are 24h, refresh after 23h)
             if self._token and time.time() < self._token_expiry - 3600:
                 return True
 
-            cfg = _load_config()
             email = cfg["email"]
             password = cfg["password"]
-            if not password:
-                logger.warning("mem0-oss: MEM0_OSS_PASSWORD not set, cannot login")
-                return False
 
             data = json.dumps({"email": email, "password": password}).encode()
             try:
@@ -200,24 +187,23 @@ class Mem0OssMemoryProvider(MemoryProvider):
                 return False
 
     def _api(self, method: str, path: str, body: Optional[dict] = None) -> dict:
-        """Make an authenticated API call. Auto-refreshes token if needed."""
+        """Make an API call. Handles auth (JWT / API key / no-auth)."""
         if self._is_breaker_open():
             raise RuntimeError("Circuit breaker open")
 
-        # Ensure we have a token
+        # Ensure we have credentials (or confirm no-auth mode)
         if not self._login():
             raise RuntimeError("Not authenticated")
 
         url = f"{self._url}{path}"
         data = json.dumps(body).encode() if body else None
 
-        req = urllib.request.Request(
-            url, data=data, method=method,
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Content-Type": "application/json",
-            },
-        )
+        headers = {"Content-Type": "application/json"}
+        if self._token:
+            # Use Bearer token if we have one (from login or API key)
+            headers["Authorization"] = f"Bearer {self._token}"
+
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
 
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
@@ -227,18 +213,15 @@ class Mem0OssMemoryProvider(MemoryProvider):
         except urllib.error.HTTPError as e:
             body_text = e.read().decode(errors="replace")
             logger.warning("mem0-oss: HTTP %d on %s %s: %s", e.code, method, path, body_text)
-            # 401 = token expired, retry after refresh
-            if e.code == 401:
+            # 401 = token expired, retry after refresh (password auth only)
+            if e.code == 401 and _load_config().get("password"):
                 self._token = None
                 if self._login():
-                    # Retry once
-                    req = urllib.request.Request(
-                        url, data=data, method=method,
-                        headers={
-                            "Authorization": f"Bearer {self._token}",
-                            "Content-Type": "application/json",
-                        },
-                    )
+                    # Retry once with fresh token
+                    headers2 = {"Content-Type": "application/json"}
+                    if self._token:
+                        headers2["Authorization"] = f"Bearer {self._token}"
+                    req = urllib.request.Request(url, data=data, method=method, headers=headers2)
                     try:
                         with urllib.request.urlopen(req, timeout=30) as resp2:
                             result = json.loads(resp2.read())
@@ -424,6 +407,7 @@ class Mem0OssMemoryProvider(MemoryProvider):
                 resp = self._api(
                     "GET", f"/memories?user_id={self._user_id}&page=1&size=50"
                 )
+                # mem0 returns individual items (not paginated wrapper)
                 if isinstance(resp, list):
                     memories = resp
                 elif isinstance(resp, dict):
