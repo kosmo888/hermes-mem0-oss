@@ -7,7 +7,7 @@ database and are cross-searchable.
 
 Config via environment variables:
   MEM0_OSS_URL        — mem0-official server URL (default: http://localhost:8888)
-  MEM0_OSS_EMAIL      — Login email (default: admin@hermesagent.com)
+  MEM0_OSS_EMAIL      — Login email (default: admin@mem0.local)
   MEM0_OSS_PASSWORD   — Login password
   MEM0_OSS_USER_ID    — User identifier for this instance (default: hermes-native)
   MEM0_OSS_AGENT_ID   — Agent identifier (default: hermes)
