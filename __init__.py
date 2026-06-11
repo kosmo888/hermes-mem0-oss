@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -36,8 +37,15 @@ from tools.registry import tool_error
 
 logger = logging.getLogger(__name__)
 
+__version__ = "1.0.1"
+
 BREAKER_THRESHOLD = 5
 BREAKER_COOLDOWN_SECS = 120
+
+# GitHub raw URL for self-update
+GITHUB_RAW = (
+    "https://raw.githubusercontent.com/kosmo888/hermes-mem0-oss/main/__init__.py"
+)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -74,6 +82,18 @@ SEARCH_SCHEMA = {
         },
         "required": ["query"],
     },
+}
+
+
+UPDATE_SCHEMA = {
+    "name": "mem0_update",
+    "description": (
+        "Update the mem0_oss plugin from GitHub. "
+        "Fetches the latest __init__.py, compares versions, "
+        "and replaces the local file if a newer version is available. "
+        "Restart Hermes after updating to load the new plugin."
+    ),
+    "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 
@@ -394,7 +414,7 @@ class Mem0OssMemoryProvider(MemoryProvider):
     # ------------------------------------------------------------------
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        return [PROFILE_SCHEMA, SEARCH_SCHEMA]
+        return [PROFILE_SCHEMA, SEARCH_SCHEMA, UPDATE_SCHEMA]
 
     def handle_tool_call(self, tool_name: str, args: dict, **kwargs) -> str:
         if self._is_breaker_open():
@@ -443,7 +463,63 @@ class Mem0OssMemoryProvider(MemoryProvider):
             except Exception as e:
                 return tool_error(f"mem0_search failed: {e}")
 
+        elif tool_name == "mem0_update":
+            return self._do_update()
+
         return tool_error(f"Unknown tool: {tool_name}")
+
+    # ------------------------------------------------------------------
+    # Self-update
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_version(source: str) -> tuple:
+        """Extract __version__ from plugin source code."""
+        m = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', source, re.MULTILINE)
+        if not m:
+            return (0, 0, 0)
+        parts = m.group(1).split(".")
+        return tuple(int(p) for p in parts if p.isdigit())
+
+    def _do_update(self) -> str:
+        """Fetch latest plugin from GitHub and replace local file if newer."""
+        try:
+            req = urllib.request.Request(GITHUB_RAW)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                remote_src = resp.read().decode("utf-8")
+        except Exception as e:
+            return tool_error(f"Failed to fetch from GitHub: {e}")
+
+        remote_ver = self._parse_version(remote_src)
+        local_ver = self._parse_version(f'__version__ = "{__version__}"')
+
+        if remote_ver <= local_ver:
+            return json.dumps({
+                "status": "up_to_date",
+                "current": __version__,
+                "remote": ".".join(str(p) for p in remote_ver),
+                "message": f"Plugin is up to date (v{__version__}).",
+            })
+
+        # Write new version
+        local_path = __file__
+        try:
+            with open(local_path, "w") as f:
+                f.write(remote_src)
+        except Exception as e:
+            return tool_error(f"Failed to write updated plugin: {e}")
+
+        remote_str = ".".join(str(p) for p in remote_ver)
+        logger.info("mem0-oss: self-updated from v%s to v%s", __version__, remote_str)
+        return json.dumps({
+            "status": "updated",
+            "old_version": __version__,
+            "new_version": remote_str,
+            "message": (
+                f"Plugin updated from v{__version__} → v{remote_str}. "
+                "Restart Hermes gateway to load the new version."
+            ),
+        })
 
     # ------------------------------------------------------------------
     # Shutdown
