@@ -14,9 +14,25 @@ A [Hermes Agent](https://github.com/NousResearch/hermes-agent) memory provider p
 
 ## Prerequisites
 
-1. A running [mem0-official](https://github.com/mem0ai/mem0) server (with pgvector)
-2. Hermes Agent v0.16.0+
-3. Network access from Hermes to the mem0 server
+### 1. mem0-official server
+
+mem0-official runs as three Docker containers on the host:
+
+| Container | Port | Description |
+|-----------|------|-------------|
+| mem0-server | 8888 | REST API server |
+| mem0-postgres | 8433 | pgvector database |
+| mem0-dashboard | 3006 | Web management UI |
+
+Install from: **[github.com/mem0ai/mem0](https://github.com/mem0ai/mem0)**
+
+### 2. Hermes Agent
+
+v0.16.0+ ([github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent))
+
+### 3. Network access
+
+Hermes must be able to reach the mem0-server container (typically `localhost:8888` on the same host, or `172.x.x.x:8888` for Docker-to-Docker).
 
 ## Quick Start
 
@@ -109,22 +125,27 @@ mem0_profile()
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐
-│  Native Hermes   │     │  Docker Hermes   │
-│  user_id=alice   │     │  user_id=bob     │
-└────────┬─────────┘     └────────┬─────────┘
-         │   REST API             │   REST API
-         └───────────┬────────────┘
-                     │
-            ┌────────▼────────┐
-            │   mem0-server   │
-            │   (port 8888)   │
-            └────────┬────────┘
-                     │
-            ┌────────▼────────┐
-            │  pgvector (PG)  │
-            │   (port 5432)   │
-            └─────────────────┘
+┌──────────────────┐     ┌──────────────────┐
+│  Native Hermes    │     │  Docker Hermes    │
+│  user_id=alice    │     │  user_id=bob      │
+└────────┬──────────┘     └────────┬──────────┘
+         │   REST API              │   REST API
+         └────────────┬────────────┘
+                      │
+         ┌────────────▼────────────┐
+         │    mem0-server (8888)   │
+         │    REST API + LLM       │
+         └────────────┬────────────┘
+                      │
+         ┌────────────▼────────────┐
+         │  mem0-postgres (8433)   │
+         │  pgvector extension     │
+         └─────────────────────────┘
+
+         ┌─────────────────────────┐
+         │  mem0-dashboard (3006)  │
+         │  Web management UI      │
+         └─────────────────────────┘
 ```
 
 ## Notes
